@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Datasets
+data/raw/*
+data/processed/*
+data/latent_patches/*
+
+# Checkpoints
+checkpoints/*
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Experiment logs
+results/logs/*
+results/tmp/*
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env

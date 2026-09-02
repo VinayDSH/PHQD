@@ -25,7 +25,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.models.pqc import PQCDenoiser, ClassicalToyBaseline
+from src.models.pqc import (
+    PQCDenoiser,
+    ClassicalToyBaseline,
+    ParameterMatchedClassicalBaseline,
+    CirculantLinear,
+)
 from src.data.toy_denoising import (
     generate_toy_denoising_data,
     ToyGaussianDenoisingDataset,
@@ -213,6 +218,22 @@ class TestToyPQCDenoising(unittest.TestCase):
         self.assertTrue(torch.equal(w_c_1, w_c_2), "Same classical init seed must produce identical weights")
         self.assertFalse(torch.equal(w_c_1, w_c_3), "Different classical init seed must produce distinct weights")
 
+        # Parameter-matched classical baseline deterministic initialization
+        set_seed(301)
+        pm_1 = ParameterMatchedClassicalBaseline(dim=6, layers=2)
+        w_pm_1 = next(pm_1.parameters()).clone()
+
+        set_seed(301)
+        pm_2 = ParameterMatchedClassicalBaseline(dim=6, layers=2)
+        w_pm_2 = next(pm_2.parameters()).clone()
+
+        set_seed(302)
+        pm_3 = ParameterMatchedClassicalBaseline(dim=6, layers=2)
+        w_pm_3 = next(pm_3.parameters()).clone()
+
+        self.assertTrue(torch.equal(w_pm_1, w_pm_2), "Same parameter-matched init seed must produce identical weights")
+        self.assertFalse(torch.equal(w_pm_1, w_pm_3), "Different parameter-matched init seed must produce distinct weights")
+
     def test_multiple_experiment_results_retention(self):
         """Verify that sequential experiment runs are preserved rather than overwritten in JSON."""
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -309,6 +330,117 @@ class TestToyPQCDenoising(unittest.TestCase):
             self.assertEqual(len(converted_logs), 2)
             self.assertEqual(converted_logs[0]["seed"], 99)
             self.assertEqual(converted_logs[1]["seed"], 100)
+
+    def test_parameter_matched_exact_equality_and_properties(self):
+        """Verify exact parameter count equality between PQC and classical baseline for D in {4, 6, 8} and L in {1, 2, 3},
+
+        along with output shape, finite bounds, Tanh output range, and gradient backpropagation.
+        """
+        dims = [4, 6, 8]
+        layers_list = [1, 2, 3]
+
+        for D in dims:
+            # Check single CirculantLinear layer has strictly D parameters
+            circ_layer = CirculantLinear(dim=D)
+            self.assertEqual(
+                circ_layer.num_parameters,
+                D,
+                f"CirculantLinear({D}) must have exactly {D} parameters",
+            )
+
+            for L in layers_list:
+                expected_params = D * L
+
+                # 1. PQC Denoiser
+                pqc = PQCDenoiser(n_qubits=D, n_layers=L)
+                self.assertEqual(
+                    pqc.num_parameters,
+                    expected_params,
+                    f"PQC({D}, {L}) expected {expected_params} parameters, got {pqc.num_parameters}",
+                )
+
+                # 2. Parameter-Matched Classical Baseline
+                classical = ParameterMatchedClassicalBaseline(dim=D, layers=L)
+                self.assertEqual(
+                    classical.num_parameters,
+                    expected_params,
+                    f"Classical({D}, {L}) expected {expected_params} parameters, got {classical.num_parameters}",
+                )
+
+                # 3. Exact 1:1 Parameter Equality
+                self.assertEqual(
+                    classical.num_parameters,
+                    pqc.num_parameters,
+                    f"Parameter mismatch for D={D}, L={L}: Classical={classical.num_parameters}, PQC={pqc.num_parameters}",
+                )
+
+                # 4. Output Shape Verification (Batched and 1D)
+                batch_size = 5
+                x_batched = torch.randn(batch_size, D)
+                out_batched = classical(x_batched)
+                self.assertEqual(
+                    out_batched.shape,
+                    torch.Size([batch_size, D]),
+                    f"Batched output shape mismatch for D={D}, L={L}",
+                )
+
+                x_1d = torch.randn(D)
+                out_1d = classical(x_1d)
+                self.assertEqual(
+                    out_1d.shape,
+                    torch.Size([D]),
+                    f"1D output shape mismatch for D={D}, L={L}",
+                )
+
+                # 5. Finite Outputs and Tanh Range Bound [-1, 1] for both batched and 1D
+                self.assertTrue(
+                    torch.isfinite(out_batched).all(),
+                    f"Batched outputs must be finite for D={D}, L={L}",
+                )
+                self.assertTrue(
+                    torch.isfinite(out_1d).all(),
+                    f"1D outputs must be finite for D={D}, L={L}",
+                )
+                self.assertGreaterEqual(
+                    out_batched.min().item(),
+                    -1.0 - 1e-6,
+                    f"Batched Tanh output must be >= -1.0 for D={D}, L={L}",
+                )
+                self.assertLessEqual(
+                    out_batched.max().item(),
+                    1.0 + 1e-6,
+                    f"Batched Tanh output must be <= 1.0 for D={D}, L={L}",
+                )
+                self.assertGreaterEqual(
+                    out_1d.min().item(),
+                    -1.0 - 1e-6,
+                    f"1D Tanh output must be >= -1.0 for D={D}, L={L}",
+                )
+                self.assertLessEqual(
+                    out_1d.max().item(),
+                    1.0 + 1e-6,
+                    f"1D Tanh output must be <= 1.0 for D={D}, L={L}",
+                )
+
+                # 6. Backward Pass and Gradient Flow
+                target = torch.randn_like(out_batched)
+                loss = nn.MSELoss()(out_batched, target)
+                loss.backward()
+
+                for name, param in classical.named_parameters():
+                    self.assertIsNotNone(
+                        param.grad,
+                        f"Gradient is None for parameter {name} (D={D}, L={L})",
+                    )
+                    self.assertFalse(
+                        torch.isnan(param.grad).any(),
+                        f"Gradient has NaNs for parameter {name} (D={D}, L={L})",
+                    )
+                    self.assertGreater(
+                        param.grad.abs().sum().item(),
+                        0.0,
+                        f"Gradient is zero for parameter {name} (D={D}, L={L})",
+                    )
 
 
 if __name__ == "__main__":

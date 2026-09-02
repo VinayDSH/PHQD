@@ -10,6 +10,7 @@ Provides:
 from typing import Tuple, Dict, Any, Optional
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import pennylane as qml
 
 
@@ -147,3 +148,80 @@ class ClassicalToyBaseline(nn.Module):
             Denoised vector of shape [B, dim] or [dim].
         """
         return self.net(x)
+
+
+class CirculantLinear(nn.Module):
+    """Linear layer parameterized by a circulant matrix with exactly `dim` trainable parameters.
+
+    Constructs a circulant matrix C from a single weight vector of shape [dim],
+    where C[i, j] = weight[(i - j) % dim], representing a 1D discrete circular convolution.
+    Has zero bias and no hidden parameters.
+    """
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.dim = dim
+        self.weight = nn.Parameter(torch.empty(dim))
+        nn.init.normal_(self.weight, mean=0.0, std=1.0 / (dim ** 0.5))
+
+        # Precompute fixed circulant index matrix: indices[i, j] = (i - j) % dim
+        # Registered as non-trainable buffer so it moves across devices without adding parameters
+        indices = (torch.arange(dim)[:, None] - torch.arange(dim)[None, :]) % dim
+        self.register_buffer("indices", indices, persistent=False)
+
+    @property
+    def num_parameters(self) -> int:
+        """Return number of trainable parameters in this layer (strictly dim)."""
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply circulant linear transformation.
+
+        Args:
+            x: Input tensor of shape [B, dim] or [dim].
+
+        Returns:
+            Output tensor of shape [B, dim] or [dim].
+        """
+        C = self.weight[self.indices]
+        return F.linear(x, C)
+
+
+class ParameterMatchedClassicalBaseline(nn.Module):
+    """Parameter-matched classical baseline for PHQD Module 2.
+
+    Consists of `layers` successive CirculantLinear layers, achieving exactly
+    `dim * layers` trainable parameters to strictly match the PQC parameter count
+    for any configuration of (qubits, layers).
+
+    Uses ReLU activations between intermediate layers and Tanh after the final layer
+    to bound output values to [-1.0, 1.0], matching the Pauli-Z expectation range.
+    """
+
+    def __init__(self, dim: int = 6, layers: int = 2):
+        super().__init__()
+        self.dim = dim
+        self.layers = layers
+        self.circ_layers = nn.ModuleList([CirculantLinear(dim) for _ in range(layers)])
+
+    @property
+    def num_parameters(self) -> int:
+        """Return total trainable parameters (strictly dim * layers)."""
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through circulant layers with intermediate ReLU and final Tanh.
+
+        Args:
+            x: Input tensor of shape [B, dim] or [dim].
+
+        Returns:
+            Output tensor of shape [B, dim] or [dim] with values in [-1, 1].
+        """
+        h = x
+        for i, layer in enumerate(self.circ_layers):
+            h = layer(h)
+            if i < self.layers - 1:
+                h = F.relu(h)
+        return torch.tanh(h)
+

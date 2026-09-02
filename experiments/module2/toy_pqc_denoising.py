@@ -22,7 +22,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.models.pqc import PQCDenoiser, ClassicalToyBaseline
+from src.models.pqc import (
+    PQCDenoiser,
+    ClassicalToyBaseline,
+    ParameterMatchedClassicalBaseline,
+)
 from src.data.toy_denoising import get_toy_denoising_dataloaders
 
 
@@ -225,8 +229,8 @@ def run_toy_denoising_experiment(
     # 3. Optional Classical Baseline Comparison with independently controlled initialization seed
     if compare_classical:
         set_seed(classical_init_seed)
-        classical_model = ClassicalToyBaseline(dim=qubits, hidden_dim=1, bias=False)
-        print(f"\n--- Training Classical Baseline ({classical_model.num_parameters} classical parameters) ---")
+        classical_model = ParameterMatchedClassicalBaseline(dim=qubits, layers=layers)
+        print(f"\n--- Training Parameter-Matched Classical Baseline ({classical_model.num_parameters} classical parameters) ---")
         classical_results = train_toy_denoiser(
             model=classical_model,
             train_loader=train_loader,
@@ -234,7 +238,7 @@ def run_toy_denoising_experiment(
             epochs=epochs,
             lr=lr,
             device=device,
-            model_name="Classical_MLP",
+            model_name="Classical_Circulant_MLP",
         )
         results_summary["classical_results"] = classical_results
 

@@ -151,9 +151,12 @@ def run_toy_denoising_experiment(
     compare_classical: bool = True,
     output_dir: str = "results/logs",
     device_name: Optional[str] = None,
+    pqc_seed: Optional[int] = None,
+    classical_seed: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Orchestrate the toy denoising experiment, logging results to output_dir."""
-    set_seed(seed)
+    """Orchestrate the toy denoising experiment, appending results to output_dir."""
+    pqc_init_seed = pqc_seed if pqc_seed is not None else seed
+    classical_init_seed = classical_seed if classical_seed is not None else (seed + 100)
 
     if device_name is not None:
         device = torch.device(device_name)
@@ -163,12 +166,14 @@ def run_toy_denoising_experiment(
 
     print("=" * 70)
     print("PHQD Module 2 Stage 1: Toy Gaussian Denoising Experiment")
-    print(f"Device: {device} | Seed: {seed} | Vector Dim / Qubits: {qubits} | Depth: {layers}")
+    print(f"Device: {device} | Dataset Seed: {seed} | Vector Dim / Qubits: {qubits} | Depth: {layers}")
+    print(f"PQC Init Seed: {pqc_init_seed} | Classical Init Seed: {classical_init_seed}")
     print(f"Noise Std: {noise_std} | Epochs: {epochs} | Batch Size: {batch_size} | LR: {lr}")
     print(f"Samples: Train={num_train}, Val={num_val}")
     print("=" * 70)
 
-    # 1. Prepare data loaders
+    # 1. Prepare data loaders with controlled dataset seed
+    set_seed(seed)
     train_loader, val_loader = get_toy_denoising_dataloaders(
         num_train=num_train,
         num_val=num_val,
@@ -178,7 +183,8 @@ def run_toy_denoising_experiment(
         seed=seed,
     )
 
-    # 2. Train PQC Denoiser
+    # 2. Train PQC Denoiser with independently controlled initialization seed
+    set_seed(pqc_init_seed)
     pqc_model = PQCDenoiser(n_qubits=qubits, n_layers=layers)
     print(f"\n--- Training PQC Denoiser ({pqc_model.num_parameters} quantum parameters) ---")
     pqc_results = train_toy_denoiser(
@@ -193,22 +199,32 @@ def run_toy_denoising_experiment(
 
     results_summary: Dict[str, Any] = {
         "experiment": "toy_gaussian_denoising",
+        "qubits": qubits,
         "qubit_count": qubits,
+        "layers": layers,
         "circuit_depth": layers,
         "vector_dim": qubits,
         "noise_std": noise_std,
         "seed": seed,
+        "pqc_init_seed": pqc_init_seed,
+        "classical_init_seed": classical_init_seed if compare_classical else None,
+        "model_initialization": {
+            "pqc_init_seed": pqc_init_seed,
+            "classical_init_seed": classical_init_seed if compare_classical else None,
+        },
         "device": str(device),
         "epochs": epochs,
         "lr": lr,
         "batch_size": batch_size,
         "num_train": num_train,
         "num_val": num_val,
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
         "pqc_results": pqc_results,
     }
 
-    # 3. Optional Classical Baseline Comparison
+    # 3. Optional Classical Baseline Comparison with independently controlled initialization seed
     if compare_classical:
+        set_seed(classical_init_seed)
         classical_model = ClassicalToyBaseline(dim=qubits, hidden_dim=1, bias=False)
         print(f"\n--- Training Classical Baseline ({classical_model.num_parameters} classical parameters) ---")
         classical_results = train_toy_denoiser(
@@ -222,16 +238,34 @@ def run_toy_denoising_experiment(
         )
         results_summary["classical_results"] = classical_results
 
-    # 4. Save results log
+    # 4. Save results log, preserving previous runs instead of overwriting
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
     log_file = out_path / "toy_pqc_denoising_results.json"
 
+    runs = []
+    if log_file.exists():
+        try:
+            with open(log_file, "r", encoding="utf-8") as f:
+                existing_data = json.load(f)
+                if isinstance(existing_data, list):
+                    runs = existing_data
+                elif isinstance(existing_data, dict):
+                    # Backward compatibility: preserve existing single-run dictionary
+                    runs = [existing_data]
+        except (json.JSONDecodeError, OSError):
+            runs = []
+
+    run_id = len(runs) + 1
+    results_summary["run_id"] = run_id
+    runs.append(results_summary)
+
     with open(log_file, "w", encoding="utf-8") as f:
-        json.dump(results_summary, f, indent=2)
+        json.dump(runs, f, indent=2)
 
     print("\n" + "=" * 70)
     print("Experiment Summary")
+    print(f"Run ID:                  {run_id} (Total runs preserved: {len(runs)})")
     print(f"PQC Parameters:          {pqc_results['parameter_count']}")
     print(f"PQC Initial Val MSE:     {pqc_results['initial_val_loss']:.6f}")
     print(f"PQC Final Val MSE:       {pqc_results['final_val_loss']:.6f}")
@@ -261,6 +295,8 @@ if __name__ == "__main__":
     parser.add_argument("--no-classical", action="store_true", help="Skip classical baseline comparison")
     parser.add_argument("--output-dir", default="results/logs", help="Directory to save JSON results")
     parser.add_argument("--device", default=None, help="Device ('cuda' or 'cpu')")
+    parser.add_argument("--pqc-seed", type=int, default=None, help="Independent seed for PQC initialization")
+    parser.add_argument("--classical-seed", type=int, default=None, help="Independent seed for classical initialization")
 
     args = parser.parse_args()
 
@@ -277,4 +313,6 @@ if __name__ == "__main__":
         compare_classical=not args.no_classical,
         output_dir=args.output_dir,
         device_name=args.device,
+        pqc_seed=args.pqc_seed,
+        classical_seed=args.classical_seed,
     )

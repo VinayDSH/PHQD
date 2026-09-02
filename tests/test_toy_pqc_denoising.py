@@ -12,6 +12,8 @@ Verifies:
 """
 
 import sys
+import tempfile
+import json
 from pathlib import Path
 import unittest
 import torch
@@ -28,6 +30,10 @@ from src.data.toy_denoising import (
     generate_toy_denoising_data,
     ToyGaussianDenoisingDataset,
     get_toy_denoising_dataloaders,
+)
+from experiments.module2.toy_pqc_denoising import (
+    run_toy_denoising_experiment,
+    set_seed,
 )
 
 
@@ -172,6 +178,137 @@ class TestToyPQCDenoising(unittest.TestCase):
             12,
             f"Expected 12 parameters for classical baseline, got {classical_model.num_parameters}",
         )
+
+    def test_independent_seed_initialization(self):
+        """Verify PQC and classical models initialize deterministically with independent seeds."""
+        # PQC deterministic initialization with same seed
+        set_seed(101)
+        pqc_1 = PQCDenoiser(n_qubits=6, n_layers=2)
+        w_pqc_1 = next(pqc_1.parameters()).clone()
+
+        set_seed(101)
+        pqc_2 = PQCDenoiser(n_qubits=6, n_layers=2)
+        w_pqc_2 = next(pqc_2.parameters()).clone()
+
+        set_seed(102)
+        pqc_3 = PQCDenoiser(n_qubits=6, n_layers=2)
+        w_pqc_3 = next(pqc_3.parameters()).clone()
+
+        self.assertTrue(torch.equal(w_pqc_1, w_pqc_2), "Same PQC init seed must produce identical weights")
+        self.assertFalse(torch.equal(w_pqc_1, w_pqc_3), "Different PQC init seed must produce distinct weights")
+
+        # Classical deterministic initialization with same seed
+        set_seed(201)
+        c_1 = ClassicalToyBaseline(dim=6, hidden_dim=1, bias=False)
+        w_c_1 = next(c_1.parameters()).clone()
+
+        set_seed(201)
+        c_2 = ClassicalToyBaseline(dim=6, hidden_dim=1, bias=False)
+        w_c_2 = next(c_2.parameters()).clone()
+
+        set_seed(202)
+        c_3 = ClassicalToyBaseline(dim=6, hidden_dim=1, bias=False)
+        w_c_3 = next(c_3.parameters()).clone()
+
+        self.assertTrue(torch.equal(w_c_1, w_c_2), "Same classical init seed must produce identical weights")
+        self.assertFalse(torch.equal(w_c_1, w_c_3), "Different classical init seed must produce distinct weights")
+
+    def test_multiple_experiment_results_retention(self):
+        """Verify that sequential experiment runs are preserved rather than overwritten in JSON."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_file = Path(tmp_dir) / "toy_pqc_denoising_results.json"
+
+            # Run 1
+            res_1 = run_toy_denoising_experiment(
+                qubits=6,
+                layers=2,
+                noise_std=0.2,
+                seed=42,
+                epochs=1,
+                num_train=16,
+                num_val=8,
+                compare_classical=True,
+                output_dir=tmp_dir,
+                pqc_seed=111,
+                classical_seed=222,
+            )
+
+            self.assertTrue(log_file.exists(), "Log file should exist after run 1")
+            with open(log_file, "r", encoding="utf-8") as f:
+                logs_after_run1 = json.load(f)
+
+            self.assertIsInstance(logs_after_run1, list, "Logs should be stored as a list of runs")
+            self.assertEqual(len(logs_after_run1), 1, "Expected exactly 1 run entry after run 1")
+            entry_1 = logs_after_run1[0]
+            self.assertEqual(entry_1["run_id"], 1)
+            self.assertEqual(entry_1["qubits"], 6)
+            self.assertEqual(entry_1["layers"], 2)
+            self.assertEqual(entry_1["noise_std"], 0.2)
+            self.assertEqual(entry_1["seed"], 42)
+            self.assertEqual(entry_1["pqc_init_seed"], 111)
+            self.assertEqual(entry_1["classical_init_seed"], 222)
+            self.assertIn("pqc_results", entry_1)
+            self.assertIn("classical_results", entry_1)
+
+            # Run 2 (different seed/params)
+            res_2 = run_toy_denoising_experiment(
+                qubits=6,
+                layers=2,
+                noise_std=0.3,
+                seed=43,
+                epochs=1,
+                num_train=16,
+                num_val=8,
+                compare_classical=True,
+                output_dir=tmp_dir,
+                pqc_seed=333,
+                classical_seed=444,
+            )
+
+            with open(log_file, "r", encoding="utf-8") as f:
+                logs_after_run2 = json.load(f)
+
+            self.assertEqual(len(logs_after_run2), 2, "Expected exactly 2 run entries after run 2")
+
+            # Verify run 1 metrics were preserved and not overwritten
+            self.assertEqual(logs_after_run2[0]["seed"], 42)
+            self.assertEqual(logs_after_run2[0]["noise_std"], 0.2)
+            self.assertEqual(logs_after_run2[0]["pqc_init_seed"], 111)
+            self.assertEqual(logs_after_run2[0]["run_id"], 1)
+
+            # Verify run 2 metrics
+            entry_2 = logs_after_run2[1]
+            self.assertEqual(entry_2["run_id"], 2)
+            self.assertEqual(entry_2["seed"], 43)
+            self.assertEqual(entry_2["noise_std"], 0.3)
+            self.assertEqual(entry_2["pqc_init_seed"], 333)
+            self.assertEqual(entry_2["classical_init_seed"], 444)
+
+            # Test backward compatibility: pre-existing legacy single-dict log
+            legacy_file = Path(tmp_dir) / "legacy_test" / "toy_pqc_denoising_results.json"
+            legacy_file.parent.mkdir(parents=True, exist_ok=True)
+            legacy_dict = {"experiment": "toy_gaussian_denoising", "seed": 99, "qubit_count": 6}
+            with open(legacy_file, "w", encoding="utf-8") as f:
+                json.dump(legacy_dict, f)
+
+            run_toy_denoising_experiment(
+                qubits=6,
+                layers=2,
+                noise_std=0.2,
+                seed=100,
+                epochs=1,
+                num_train=16,
+                num_val=8,
+                compare_classical=False,
+                output_dir=str(legacy_file.parent),
+            )
+
+            with open(legacy_file, "r", encoding="utf-8") as f:
+                converted_logs = json.load(f)
+            self.assertIsInstance(converted_logs, list)
+            self.assertEqual(len(converted_logs), 2)
+            self.assertEqual(converted_logs[0]["seed"], 99)
+            self.assertEqual(converted_logs[1]["seed"], 100)
 
 
 if __name__ == "__main__":

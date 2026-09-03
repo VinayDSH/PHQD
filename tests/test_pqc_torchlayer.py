@@ -118,6 +118,59 @@ class TestPQCTorchLayer(unittest.TestCase):
             f"Expected non-zero input gradient norm, but got {input_grad_norm}",
         )
 
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
+    def test_cuda_execution_forward_backward(self):
+        """Regression test verifying PQCDenoiser forward and backward pass on CUDA."""
+        from src.models.pqc import PQCDenoiser
+
+        device = torch.device("cuda:0")
+        model = PQCDenoiser(n_qubits=self.n_qubits, n_layers=self.n_layers).to(device)
+
+        batch_size = 4
+        x = torch.randn(batch_size, self.n_qubits, device=device, requires_grad=True)
+
+        out = model(x)
+        self.assertEqual(out.device.type, "cuda")
+        self.assertEqual(out.shape, torch.Size([batch_size, self.n_qubits]))
+        self.assertTrue(torch.isfinite(out).all())
+
+        loss = out.sum()
+        loss.backward()
+
+        self.assertIsNotNone(model.torch_layer.weights.grad)
+        self.assertEqual(model.torch_layer.weights.grad.device.type, "cuda")
+        self.assertTrue(torch.isfinite(model.torch_layer.weights.grad).all())
+        self.assertGreater(model.torch_layer.weights.grad.norm().item(), 0.0)
+
+        self.assertIsNotNone(x.grad)
+        self.assertEqual(x.grad.device.type, "cuda")
+        self.assertTrue(torch.isfinite(x.grad).all())
+        self.assertGreater(x.grad.norm().item(), 0.0)
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is not available")
+    def test_cuda_optimization_step(self):
+        """Regression test verifying an optimization step on CUDA updates weights with finite loss."""
+        from src.models.pqc import PQCDenoiser
+
+        device = torch.device("cuda:0")
+        model = PQCDenoiser(n_qubits=self.n_qubits, n_layers=self.n_layers).to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.05)
+        criterion = torch.nn.MSELoss()
+
+        x = torch.randn(8, self.n_qubits, device=device)
+        target = torch.randn(8, self.n_qubits, device=device)
+
+        initial_loss = criterion(model(x), target).item()
+        optimizer.zero_grad()
+        pred = model(x)
+        loss = criterion(pred, target)
+        loss.backward()
+        optimizer.step()
+        final_loss = criterion(model(x), target).item()
+
+        self.assertTrue(torch.isfinite(torch.tensor(final_loss)))
+        self.assertNotEqual(initial_loss, final_loss)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

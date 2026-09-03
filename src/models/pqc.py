@@ -41,6 +41,12 @@ def create_pqc_circuit(
 
     @qml.qnode(dev, interface="torch", diff_method="backprop")
     def circuit(inputs, weights):
+        # default.qubit statevector simulation requires CPU tensors
+        if isinstance(inputs, torch.Tensor) and inputs.is_cuda:
+            inputs = inputs.to("cpu")
+        if isinstance(weights, torch.Tensor) and weights.is_cuda:
+            weights = weights.to("cpu")
+
         # Angle/Y encoding
         for i in range(n_qubits):
             qml.RY(inputs[..., i], wires=i)
@@ -59,6 +65,22 @@ def create_pqc_circuit(
 
     weight_shapes = {"weights": (n_layers, n_qubits)}
     return circuit, weight_shapes
+
+
+class DeviceCompatibleTorchLayer(qml.qnn.TorchLayer):
+    """TorchLayer subclass ensuring CUDA compatibility for default.qubit QNodes.
+
+    When inputs or weights reside on CUDA, tensors are evaluated on CPU for the
+    default.qubit statevector simulator, and the result is transferred back to the
+    input tensor device while preserving the autograd computational graph.
+    """
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        target_device = inputs.device
+        if target_device.type != "cpu":
+            out = super().forward(inputs.to("cpu"))
+            return out.to(target_device)
+        return super().forward(inputs)
 
 
 class PQCDenoiser(nn.Module):
@@ -90,7 +112,7 @@ class PQCDenoiser(nn.Module):
             n_layers=n_layers,
             dev=dev,
         )
-        self.torch_layer = qml.qnn.TorchLayer(qnode, weight_shapes)
+        self.torch_layer = DeviceCompatibleTorchLayer(qnode, weight_shapes)
 
     @property
     def num_parameters(self) -> int:

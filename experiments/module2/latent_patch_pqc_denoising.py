@@ -251,33 +251,38 @@ def run_latent_patch_denoising_experiment(
             )
         val_patches = p
 
-    # If in-memory tensors are supplied and sample caps are requested
-    if isinstance(train_patches, torch.Tensor) and max_train_samples is not None:
-        train_patches = train_patches[:max_train_samples]
-    if isinstance(val_patches, torch.Tensor) and max_val_samples is not None:
-        val_patches = val_patches[:max_val_samples]
+    train_patches_tensor = load_raw_patches(train_patches)
+    if max_train_samples is not None:
+        train_patches_tensor = train_patches_tensor[:max_train_samples]
+
+    val_patches_tensor = load_raw_patches(val_patches)
+    if max_val_samples is not None:
+        val_patches_tensor = val_patches_tensor[:max_val_samples]
 
     pqc_init_seed = pqc_seed if pqc_seed is not None else dataset_seed
     classical_init_seed = classical_seed if classical_seed is not None else (dataset_seed + 100)
 
     device = torch.device(device_name if device_name is not None else "cpu")
 
+    # 2. Build Datasets with frozen projector fitted only on training data
+    train_dataset, val_dataset, projector = prepare_latent_patch_denoising_datasets(
+        train_patches=train_patches_tensor,
+        val_patches=val_patches_tensor,
+        noise_std=noise_std,
+        projector_seed=projector_seed,
+        dataset_seed=dataset_seed,
+    )
+
     print("=" * 70)
     print("PHQD Module 2 Stage 2: Latent-Patch PQC Denoising Experiment")
     print(f"Device: {device} | Projector Seed: {projector_seed} | Dataset Seed: {dataset_seed}")
     print(f"DataLoader Seed: {dataloader_seed}")
     print(f"PQC Init Seed: {pqc_init_seed} | Classical Init Seed: {classical_init_seed}")
+    print(f"Max Train Samples: {max_train_samples} | Max Val Samples: {max_val_samples}")
+    print(f"Train Images: {train_patches_tensor.size(0)} ({len(train_dataset)} patches) | "
+          f"Val Images: {val_patches_tensor.size(0)} ({len(val_dataset)} patches)")
     print(f"Noise Std: {noise_std} | Epochs: {epochs} | Batch Size: {batch_size} | LR: {lr}")
     print("=" * 70)
-
-    # 2. Build Datasets with frozen projector fitted only on training data
-    train_dataset, val_dataset, projector = prepare_latent_patch_denoising_datasets(
-        train_patches=train_patches,
-        val_patches=val_patches,
-        noise_std=noise_std,
-        projector_seed=projector_seed,
-        dataset_seed=dataset_seed,
-    )
 
     val_loader = DataLoader(
         val_dataset,
@@ -320,6 +325,12 @@ def run_latent_patch_denoising_experiment(
         "projector_seed": projector_seed,
         "dataset_seed": dataset_seed,
         "dataloader_seed": dataloader_seed,
+        "max_train_samples": max_train_samples,
+        "max_val_samples": max_val_samples,
+        "num_train_images": train_patches_tensor.size(0),
+        "num_val_images": val_patches_tensor.size(0),
+        "num_train_patches": len(train_dataset),
+        "num_val_patches": len(val_dataset),
         "model_initialization": {
             "pqc_init_seed": pqc_init_seed,
             "classical_init_seed": classical_init_seed if compare_classical else None,
@@ -401,7 +412,8 @@ def run_latent_patch_denoising_experiment(
     return results_summary
 
 
-if __name__ == "__main__":
+def build_parser() -> argparse.ArgumentParser:
+    """Construct CLI argument parser for Stage 2 latent-patch denoising experiment."""
     parser = argparse.ArgumentParser(description="Stage 2 Latent-Patch PQC Denoising Experiment")
     parser.add_argument("--train-patches", default="data/latent_patches/train_patches.pt", help="Path to train patches .pt")
     parser.add_argument("--val-patches", default="data/latent_patches/val_patches.pt", help="Path to val patches .pt")
@@ -416,10 +428,26 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=10, help="Training epochs")
     parser.add_argument("--lr", type=float, default=0.05, help="Learning rate")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
+    parser.add_argument(
+        "--max-train-samples",
+        type=int,
+        default=None,
+        help="Maximum number of training images to use (default: None, use full dataset)",
+    )
+    parser.add_argument(
+        "--max-val-samples",
+        type=int,
+        default=None,
+        help="Maximum number of validation images to use (default: None, use full dataset)",
+    )
     parser.add_argument("--no-classical", action="store_true", help="Skip classical baseline comparison")
     parser.add_argument("--output-dir", default="results/logs", help="Output directory for results JSON")
     parser.add_argument("--device", default=None, help="Device ('cpu' or 'cuda')")
+    return parser
 
+
+if __name__ == "__main__":
+    parser = build_parser()
     args = parser.parse_args()
 
     run_latent_patch_denoising_experiment(
@@ -436,6 +464,8 @@ if __name__ == "__main__":
         epochs=args.epochs,
         lr=args.lr,
         batch_size=args.batch_size,
+        max_train_samples=args.max_train_samples,
+        max_val_samples=args.max_val_samples,
         compare_classical=not args.no_classical,
         output_dir=args.output_dir,
         device_name=args.device,

@@ -26,6 +26,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from experiments.module2.latent_patch_pqc_denoising import (
     run_latent_patch_denoising_experiment,
     create_reproducible_train_loader,
+    build_parser,
 )
 from src.data.latent_patch_denoising import prepare_latent_patch_denoising_datasets
 
@@ -152,6 +153,105 @@ class TestStage2ExperimentWiring(unittest.TestCase):
                 val_patches_path="nonexistent_val.pt",
             )
         self.assertIn("Training latent patches not found", str(ctx.exception))
+
+    def test_cli_parser_defaults_and_explicit_limits(self):
+        """Verify CLI argument parser defaults to None and accepts integer limits."""
+        parser = build_parser()
+
+        # Defaults must be None
+        args_default = parser.parse_args([])
+        self.assertIsNone(args_default.max_train_samples)
+        self.assertIsNone(args_default.max_val_samples)
+
+        # Explicit integer limits
+        args_explicit = parser.parse_args([
+            "--max-train-samples", "100",
+            "--max-val-samples", "25",
+        ])
+        self.assertEqual(args_explicit.max_train_samples, 100)
+        self.assertEqual(args_explicit.max_val_samples, 25)
+
+    def test_max_samples_limits_respected(self):
+        """Verify max_train_samples and max_val_samples restrict image counts correctly."""
+        num_train_images = 6
+        num_val_images = 4
+        train_patches = torch.randn(num_train_images, 9, 4, 4, 4)
+        val_patches = torch.randn(num_val_images, 9, 4, 4, 4)
+
+        limit_train = 3
+        limit_val = 2
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            summary = run_latent_patch_denoising_experiment(
+                train_patches=train_patches,
+                val_patches=val_patches,
+                epochs=1,
+                batch_size=16,
+                max_train_samples=limit_train,
+                max_val_samples=limit_val,
+                compare_classical=False,
+                output_dir=tmp_dir,
+            )
+
+            self.assertEqual(summary["max_train_samples"], limit_train)
+            self.assertEqual(summary["max_val_samples"], limit_val)
+            self.assertEqual(summary["num_train_images"], limit_train)
+            self.assertEqual(summary["num_val_images"], limit_val)
+            self.assertEqual(summary["num_train_patches"], limit_train * 9)
+            self.assertEqual(summary["num_val_patches"], limit_val * 9)
+
+    def test_default_none_preserves_full_dataset(self):
+        """Verify default None preserves all images and patches from full dataset."""
+        num_train_images = 5
+        num_val_images = 3
+        train_patches = torch.randn(num_train_images, 9, 4, 4, 4)
+        val_patches = torch.randn(num_val_images, 9, 4, 4, 4)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            summary = run_latent_patch_denoising_experiment(
+                train_patches=train_patches,
+                val_patches=val_patches,
+                epochs=1,
+                batch_size=16,
+                max_train_samples=None,
+                max_val_samples=None,
+                compare_classical=False,
+                output_dir=tmp_dir,
+            )
+
+            self.assertIsNone(summary["max_train_samples"])
+            self.assertIsNone(summary["max_val_samples"])
+            self.assertEqual(summary["num_train_images"], num_train_images)
+            self.assertEqual(summary["num_val_images"], num_val_images)
+            self.assertEqual(summary["num_train_patches"], num_train_images * 9)
+            self.assertEqual(summary["num_val_patches"], num_val_images * 9)
+
+    def test_max_samples_with_saved_patch_files(self):
+        """Verify that loading from disk files also respects sample limits."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            train_file = Path(tmp_dir) / "train.pt"
+            val_file = Path(tmp_dir) / "val.pt"
+
+            torch.save({"patches": torch.randn(8, 9, 4, 4, 4)}, train_file)
+            torch.save({"patches": torch.randn(4, 9, 4, 4, 4)}, val_file)
+
+            summary = run_latent_patch_denoising_experiment(
+                train_patches_path=str(train_file),
+                val_patches_path=str(val_file),
+                epochs=1,
+                batch_size=16,
+                max_train_samples=2,
+                max_val_samples=1,
+                compare_classical=False,
+                output_dir=tmp_dir,
+            )
+
+            self.assertEqual(summary["max_train_samples"], 2)
+            self.assertEqual(summary["max_val_samples"], 1)
+            self.assertEqual(summary["num_train_images"], 2)
+            self.assertEqual(summary["num_val_images"], 1)
+            self.assertEqual(summary["num_train_patches"], 18)
+            self.assertEqual(summary["num_val_patches"], 9)
 
 
 if __name__ == "__main__":

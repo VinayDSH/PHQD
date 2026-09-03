@@ -74,12 +74,77 @@ class TestStage2ExperimentWiring(unittest.TestCase):
             # Check primary 6-D metrics
             self.assertTrue(torch.isfinite(torch.tensor(summary["pqc_results"]["final_val_loss"])))
             self.assertTrue(torch.isfinite(torch.tensor(summary["classical_results"]["final_val_loss"])))
+            self.assertEqual(summary["pqc_results"]["best_val_mse"], summary["pqc_results"]["final_val_loss"])
+            self.assertEqual(summary["pqc_results"]["best_epoch"], 1)
+            self.assertEqual(summary["classical_results"]["best_val_mse"], summary["classical_results"]["final_val_loss"])
+            self.assertEqual(summary["classical_results"]["best_epoch"], 1)
 
             # Check secondary 64-D metrics
             pqc_sec = summary["pqc_results"]["secondary_metrics"]["val_recon_mse_64d"]
             class_sec = summary["classical_results"]["secondary_metrics"]["val_recon_mse_64d"]
             self.assertTrue(torch.isfinite(torch.tensor(pqc_sec)))
             self.assertTrue(torch.isfinite(torch.tensor(class_sec)))
+
+    def test_validation_mse_tracking_and_best_epoch(self):
+        """Verify validation MSE is tracked per epoch, best_val_mse equals min(history),
+        and best_epoch corresponds to that minimum for both PQC and classical models."""
+        epochs = 3
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            summary = run_latent_patch_denoising_experiment(
+                train_patches=self.train_patches,
+                val_patches=self.val_patches,
+                epochs=epochs,
+                batch_size=16,
+                compare_classical=True,
+                output_dir=tmp_dir,
+            )
+
+            for model_key in ["pqc_results", "classical_results"]:
+                res = summary[model_key]
+
+                val_history = res["history"]["val_loss"]
+                train_history = res["history"]["train_loss"]
+
+                # 1. Per-epoch history tracked for all epochs
+                self.assertEqual(len(val_history), epochs)
+                self.assertEqual(len(train_history), epochs)
+
+                for val_mse in val_history:
+                    self.assertTrue(torch.isfinite(torch.tensor(val_mse)))
+                for train_mse in train_history:
+                    self.assertTrue(torch.isfinite(torch.tensor(train_mse)))
+
+                # 2. best_val_mse equals min(val_history)
+                expected_best_val_mse = min(val_history)
+                self.assertEqual(res["best_val_mse"], expected_best_val_mse)
+
+                # 3. best_epoch corresponds to that minimum (1-indexed)
+                expected_best_epoch = val_history.index(expected_best_val_mse) + 1
+                self.assertEqual(res["best_epoch"], expected_best_epoch)
+                self.assertGreaterEqual(res["best_epoch"], 1)
+                self.assertLessEqual(res["best_epoch"], epochs)
+
+                # 4. final_val_mse equals last element in history
+                self.assertEqual(res["final_val_mse"], val_history[-1])
+                self.assertEqual(res["final_train_mse"], train_history[-1])
+
+            # 5. Verify saved JSON summary contains the required keys
+            log_file = Path(tmp_dir) / "latent_patch_pqc_denoising_results.json"
+            self.assertTrue(log_file.exists())
+            with open(log_file, "r") as f:
+                saved_runs = json.load(f)
+            saved_pqc = saved_runs[0]["pqc_results"]
+            saved_cls = saved_runs[0]["classical_results"]
+
+            self.assertIn("best_val_mse", saved_pqc)
+            self.assertIn("best_epoch", saved_pqc)
+            self.assertIn("final_val_mse", saved_pqc)
+            self.assertIn("final_train_mse", saved_pqc)
+
+            self.assertIn("best_val_mse", saved_cls)
+            self.assertIn("best_epoch", saved_cls)
+            self.assertIn("final_val_mse", saved_cls)
+            self.assertIn("final_train_mse", saved_cls)
 
     def test_train_dataloader_batch_ordering_identical_for_pqc_and_classical(self):
         """Verify that train DataLoaders for PQC and classical runs iterate over

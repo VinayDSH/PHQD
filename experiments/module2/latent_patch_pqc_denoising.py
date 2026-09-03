@@ -196,14 +196,26 @@ def train_denoiser(
         )
 
     total_wall_time = time.time() - start_time
-    final_val_loss = history["val_loss"][-1]
+    val_losses = history["val_loss"]
+    train_losses = history["train_loss"]
+
+    best_val_mse = min(val_losses)
+    best_epoch = val_losses.index(best_val_mse) + 1
+    final_val_mse = val_losses[-1]
+    final_train_mse = train_losses[-1]
 
     return {
         "model_name": model_name,
         "parameter_count": sum(p.numel() for p in model.parameters() if p.requires_grad),
         "initial_val_loss": initial_val_loss,
-        "final_val_loss": final_val_loss,
-        "best_val_loss": min(history["val_loss"]),
+        "initial_val_mse": initial_val_loss,
+        "final_val_loss": final_val_mse,
+        "final_val_mse": final_val_mse,
+        "best_val_loss": best_val_mse,
+        "best_val_mse": best_val_mse,
+        "best_epoch": best_epoch,
+        "final_train_loss": final_train_mse,
+        "final_train_mse": final_train_mse,
         "total_wall_time": total_wall_time,
         "history": history,
     }
@@ -397,13 +409,15 @@ def run_latent_patch_denoising_experiment(
     print(f"Run ID:                  {run_id} (Total runs preserved: {len(runs)})")
     print(f"PQC Parameters:          {pqc_results['parameter_count']}")
     print(f"PQC Initial Val 6-D MSE: {pqc_results['initial_val_loss']:.6f}")
-    print(f"PQC Final Val 6-D MSE:   {pqc_results['final_val_loss']:.6f}")
+    print(f"PQC Best Val 6-D MSE:    {pqc_results['best_val_mse']:.6f} (Epoch {pqc_results['best_epoch']})")
+    print(f"PQC Final Val 6-D MSE:   {pqc_results['final_val_mse']:.6f}")
     print(f"PQC Val 64-D Recon MSE:  {pqc_val_64d:.6f}")
     print(f"PQC Wall-Clock:          {pqc_results['total_wall_time']:.2f}s")
     if compare_classical:
         c_res = results_summary["classical_results"]
         print(f"Classical Parameters:    {c_res['parameter_count']}")
-        print(f"Classical Final Val MSE: {c_res['final_val_loss']:.6f}")
+        print(f"Classical Best Val MSE:  {c_res['best_val_mse']:.6f} (Epoch {c_res['best_epoch']})")
+        print(f"Classical Final Val MSE: {c_res['final_val_mse']:.6f}")
         print(f"Classical 64-D Recon:    {classical_val_64d:.6f}")
         print(f"Classical Wall-Clock:    {c_res['total_wall_time']:.2f}s")
     print(f"Saved Results to:        {log_file}")

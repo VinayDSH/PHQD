@@ -1,0 +1,28 @@
+dataset:
+  train_samples: 512
+  val_samples: 128
+  channels: 4
+  height: 8
+  width: 8
+  patch_size: 4
+  stride: 2
+  noise_std: 0.25
+  train_seed: 42
+  val_seed: 1042
+
+model:
+  in_channels: 4
+  hidden_channels: 32
+  out_channels: 4
+  kernel_size: 3
+
+training:
+  epochs: 15
+  batch_size: 32
+  learning_rate: 0.001
+  optimizer: "adam"
+  loss: "mse"
+
+output:
+  log_dir: "results/logs"
+  log_filename: "toy_stitching_cnn_results.json"

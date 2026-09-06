@@ -1,0 +1,29 @@
+dataset:
+  train_samples: 512
+  val_samples: 128
+  num_patches: 9
+  dim: 6
+  train_seed: 42
+  val_seed: 1042
+
+diffusion:
+  timesteps: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
+  fixed_timestep: 500
+
+model:
+  n_qubits: 6
+  pqc_depth: 3
+  pqc_seed: 10042
+
+training:
+  epochs: 15
+  batch_size: 16
+  learning_rate: 0.05
+  optimizer: "adam"
+  loss: "mse"
+
+output:
+  log_dir: "results/logs"
+  log_filename: "toy_diffusion_pqc_denoising_results.json"

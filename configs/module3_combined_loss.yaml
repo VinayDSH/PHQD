@@ -1,0 +1,34 @@
+dataset:
+  train_samples: 512
+  val_samples: 128
+  channels: 4
+  height: 8
+  width: 8
+  patch_size: 4
+  stride: 2
+  noise_std: 0.25
+  train_seed: 42
+  val_seed: 1042
+
+model:
+  num_patches: 9
+  channels: 4
+  hidden_dim: 64
+
+training:
+  epochs: 15
+  batch_size: 32
+  learning_rate: 0.001
+  optimizer: "adam"
+
+ablation:
+  lambda_recon: 1.0
+  lambda_seam_values:
+    - 0.0
+    - 0.01
+    - 0.05
+    - 0.10
+
+output:
+  log_dir: "results/logs"
+  log_filename: "toy_combined_loss_ablation_results.json"

@@ -1,0 +1,29 @@
+dataset:
+  train_samples: 512
+  val_samples: 128
+  channels: 4
+  height: 8
+  width: 8
+  patch_size: 4
+  stride: 2
+  noise_std: 0.25
+  train_seed: 42
+  val_seed: 1042
+
+model:
+  channels: 4
+  num_patches: 9
+  hidden_dim: 64
+
+training:
+  epochs: 15
+  batch_size: 32
+  learning_rate: 0.001
+  optimizer: "adam"
+  loss: "seam_consistency"
+
+output:
+  log_dir: "results/logs"
+  log_filename: "toy_seam_consistency_results.json"
+  figure_dir: "results/figures"
+  figure_filename: "seam_disagreement_before_after.png"

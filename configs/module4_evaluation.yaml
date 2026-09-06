@@ -1,0 +1,42 @@
+# Module 4 Milestone 1: Evaluation Tooling Configuration
+# Standard benchmark settings for image-space and computational metrics
+
+evaluation:
+  val_range: [0.0, 1.0]
+  image_size: [1, 28, 28]  # Fashion-MNIST format [C, H, W]
+  device: "cuda"           # Auto-fallback to cpu if CUDA is unavailable
+
+metrics:
+  psnr:
+    enabled: true
+    max_val: 1.0
+    reduction: "mean"
+
+  ssim:
+    enabled: true
+    window_size: 11
+    sigma: 1.5
+    max_val: 1.0
+    reduction: "mean"
+
+  lpips:
+    enabled: true
+    package: "lpips"
+    version: "0.1"
+    backbone: "squeeze"
+    linear_calibration: true
+    convert_grayscale_to_rgb: true
+    input_scaling: "[-1, 1]"
+    reduction: "mean"
+
+  fid:
+    enabled: true
+    backbone: "inception_v3"
+    dims: 2048
+    batch_size: 32
+    convert_grayscale_to_rgb: true
+    eps: 1.0e-6
+
+computational:
+  warmup_runs: 3
+  num_runs: 10

@@ -34,7 +34,7 @@ def create_epqd_single_circuit(
     if dev is None:
         dev = qml.device("lightning.gpu", wires=n_qubits)
 
-    @qml.qnode(dev, interface="torch", diff_method="backprop")
+    @qml.qnode(dev, interface="torch", diff_method="adjoint")
     def circuit(inputs, weights):
 
         # Angle encoding
@@ -77,7 +77,7 @@ def create_epqd_pair_circuit(
     if dev is None:
         dev = qml.device("lightning.gpu", wires=total_qubits)
 
-    @qml.qnode(dev, interface="torch", diff_method="backprop")
+    @qml.qnode(dev, interface="torch", diff_method="adjoint")
     def circuit(inputs, weights, bridge_weights):
 
         # 1. Angle encoding on all 12 qubits
@@ -138,7 +138,7 @@ def create_epqd_quad_circuit(
     if dev is None:
         dev = qml.device("lightning.gpu", wires=total_qubits)
 
-    @qml.qnode(dev, interface="torch", diff_method="backprop")
+    @qml.qnode(dev, interface="torch", diff_method="adjoint")
     def circuit(inputs, weights, bridge_weights):
 
         # 1. Angle encoding on all 16 qubits

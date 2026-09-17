@@ -1,0 +1,84 @@
+# Module 5: Entangled Patch Quantum Diffusion (EPQD) Configuration
+# Locked specification for k in {1, 2, 4}
+
+dataset:
+  train_samples: 512
+  val_samples: 128
+  channels: 4
+  height: 8
+  width: 8
+  patch_size: 4
+  stride: 2
+  train_seed: 42
+  val_seed: 1042
+  noise_std: 0.25
+
+diffusion:
+  timesteps: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
+
+training:
+  epochs: 15
+  batch_size: 16
+  learning_rate: 0.001
+  optimizer: "Adam"
+  loss: "mse"
+  seeds:
+    - 42
+    - 1042
+    - 2042
+
+models:
+  epqd_k1:
+    k: 1
+    n_qubits: 6
+    n_layers: 3
+    patch_dim: 64
+    num_patches: 9
+
+  epqd_k2:
+    k: 2
+    n_qubits: 6
+    n_layers: 3
+    patch_dim: 64
+    num_patches: 9
+
+  epqd_k4:
+    k: 4
+    n_qubits: 4
+    n_layers: 3
+    patch_dim: 64
+    num_patches: 9
+
+compute_accounting:
+  kappa: 1.0
+  nominal_steps: 480
+  # Analytically defined C_train values
+  c_train_k1: 63866880
+  c_train_k2: 1900431360
+  c_train_k4_nq4: 45698088960
+  c_train_k4_nq6_theoretical: 16331646320640
+
+compute_matched:
+  target_c_train: 63866880
+  k2_matched_steps: 16
+
+diagnostics:
+  von_neumann_entropy: true
+  bridge_zeroing_ablation: true
+  seam_disagreement: true
+
+gate2_criteria:
+  delta_psnr_min: 0.30
+  alpha: 0.05
+  seam_reduction_pct_min: 20.0
+  entropy_min: 0.10
+  delta_loss_bridge_min: 0.01
+  efficiency_index_min: 0.15
+
+output:
+  checkpoints_dir: "checkpoints/module5"
+  logs_dir: "results/logs"
+  tables_dir: "results/tables"
+  figures_dir: "results/figures"
